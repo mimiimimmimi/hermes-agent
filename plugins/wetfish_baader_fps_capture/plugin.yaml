@@ -1,0 +1,9 @@
+name: wetfish_baader_fps_capture
+version: 0.1.0
+description: "Opt-in Wetfish capture hook: parses Baader 192/212 Telegram updates and forwards them to the FPS pi-server /api/readings endpoint. Telegram-only, gated by chat_id/thread_id/sender_id."
+author: "Wetfish / Hermes Agent"
+kind: standalone
+provides_hooks:
+  - pre_gateway_dispatch
+requires_env:
+  - FPS_SAVE_PIN
