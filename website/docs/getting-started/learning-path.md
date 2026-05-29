@@ -24,7 +24,7 @@ If you haven't installed Hermes Agent yet, begin with the [Installation guide](/
 |---|---|---|---|
 | **Beginner** | Get up and running, have basic conversations, use built-in tools | [Installation](/getting-started/installation) → [Quickstart](/getting-started/quickstart) → [CLI Usage](/user-guide/cli) → [Configuration](/user-guide/configuration) | ~1 hour |
 | **Intermediate** | Set up messaging bots, use advanced features like memory, cron jobs, and skills | [Sessions](/user-guide/sessions) → [Messaging](/user-guide/messaging) → [Tools](/user-guide/features/tools) → [Skills](/user-guide/features/skills) → [Memory](/user-guide/features/memory) → [Cron](/user-guide/features/cron) | ~2–3 hours |
-| **Advanced** | Build custom tools, create skills, train models with RL, contribute to the project | [Architecture](/developer-guide/architecture) → [Adding Tools](/developer-guide/adding-tools) → [Creating Skills](/developer-guide/creating-skills) → [RL Training](/user-guide/features/rl-training) → [Contributing](/developer-guide/contributing) | ~4–6 hours |
+| **Advanced** | Build custom tools, create skills, generate training data, contribute to the project | [Architecture](/developer-guide/architecture) → [Adding Tools](/developer-guide/adding-tools) → [Creating Skills](/developer-guide/creating-skills) → [Batch Processing](/user-guide/features/batch-processing) → [Contributing](/developer-guide/contributing) | ~4–6 hours |
 
 ## By Use Case
 
@@ -100,7 +100,7 @@ Use reinforcement learning to fine-tune model behavior with Hermes Agent's built
 
 1. [Quickstart](/getting-started/quickstart)
 2. [Configuration](/user-guide/configuration)
-3. [RL Training](/user-guide/features/rl-training)
+3. [Batch Processing](/user-guide/features/batch-processing)
 4. [Provider Routing](/user-guide/features/provider-routing)
 5. [Architecture](/developer-guide/architecture)
 
@@ -136,7 +136,7 @@ Not sure what's available? Here's a quick directory of major features:
 | **Browser** | Web browsing and scraping | [Browser](/user-guide/features/browser) |
 | **Hooks** | Event-driven callbacks and middleware | [Hooks](/user-guide/features/hooks) |
 | **Batch Processing** | Process multiple inputs in bulk | [Batch Processing](/user-guide/features/batch-processing) |
-| **RL Training** | Fine-tune models with reinforcement learning | [RL Training](/user-guide/features/rl-training) |
+| **Training data generation** | Generate agent trajectories for training or evaluation | [Batch Processing](/user-guide/features/batch-processing) |
 | **Provider Routing** | Route requests across multiple LLM providers | [Provider Routing](/user-guide/features/provider-routing) |
 
 ## What to Read Next

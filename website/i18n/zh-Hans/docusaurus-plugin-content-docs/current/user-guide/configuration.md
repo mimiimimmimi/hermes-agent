@@ -855,7 +855,7 @@ auxiliary:
 :::
 
 :::info
-上下文压缩有自己的 `compression:` 块用于阈值，以及 `auxiliary.compression:` 块用于模型/provider 设置 —— 参阅上方的[上下文压缩](#context-compression)。回退模型使用 `fallback_model:` 块 —— 参阅[回退模型](/integrations/providers#fallback-model)。三者都遵循相同的 provider/model/base_url 模式。
+上下文压缩有自己的 `compression:` 块用于阈值，以及 `auxiliary.compression:` 块用于模型/provider 设置 —— 参阅上方的[上下文压缩](#context-compression)。回退配置使用 `fallback_providers:` 链，旧版 `fallback_model:` 仍兼容 —— 参阅[回退 Provider](/integrations/providers#fallback-providers)。三者都遵循相同的 provider/model/base_url 模式。
 :::
 
 ### OpenRouter 路由和辅助任务的 Pareto Code
