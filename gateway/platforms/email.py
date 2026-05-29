@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import smtplib
+import socket
 import ssl
 import uuid
 from email.header import decode_header
@@ -255,6 +256,7 @@ class EmailAdapter(BasePlatformAdapter):
         self._smtp_host = os.getenv("EMAIL_SMTP_HOST", "")
         self._smtp_port = int(os.getenv("EMAIL_SMTP_PORT", "587"))
         self._poll_interval = int(os.getenv("EMAIL_POLL_INTERVAL", "15"))
+        self._imap_timeout = int(os.getenv("EMAIL_IMAP_TIMEOUT", "10"))
 
         # Skip attachments — configured via config.yaml:
         #   platforms:
@@ -297,7 +299,7 @@ class EmailAdapter(BasePlatformAdapter):
         """Connect to the IMAP server and start polling for new messages."""
         try:
             # Test IMAP connection
-            imap = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=30)
+            imap = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=self._imap_timeout)
             imap.login(self._address, self._password)
             _send_imap_id(imap)
             # Mark all existing messages as seen so we only process new ones
@@ -365,7 +367,7 @@ class EmailAdapter(BasePlatformAdapter):
         """Fetch new (unseen) messages from IMAP. Runs in executor thread."""
         results = []
         try:
-            imap = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=30)
+            imap = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=self._imap_timeout)
             try:
                 imap.login(self._address, self._password)
                 _send_imap_id(imap)
@@ -424,6 +426,8 @@ class EmailAdapter(BasePlatformAdapter):
                     imap.logout()
                 except Exception:
                     pass
+        except (TimeoutError, socket.timeout, imaplib.IMAP4.abort) as e:
+            logger.warning("[Email] IMAP fetch timed out/aborted; will retry next poll: %s", e)
         except Exception as e:
             logger.error("[Email] IMAP fetch error: %s", e)
         return results
