@@ -94,7 +94,12 @@ def _get_live_tracking_cwd(task_id: str = "default") -> str | None:
         container_key = task_id
 
     with _file_ops_lock:
-        cached = _file_ops_cache.get(container_key) or _file_ops_cache.get(task_id)
+        # Prefer the exact task_id.  Some tests and task-specific overrides
+        # install a live file_ops object under the original id even when the
+        # terminal container resolver collapses that id to "default".  Using
+        # the collapsed cache first can leak another task's cwd into
+        # staleness bookkeeping.
+        cached = _file_ops_cache.get(task_id) or _file_ops_cache.get(container_key)
     if cached is not None:
         live_cwd = getattr(getattr(cached, "env", None), "cwd", None) or getattr(
             cached, "cwd", None
@@ -928,12 +933,12 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
         with file_state.lock_path(_resolved):
             # Cross-agent staleness wins over per-task warning when both
             # fire — its message names the sibling subagent.
-            cross_warning = file_state.check_stale(task_id, _resolved)
+            cross_warning = file_state.check_stale_details(task_id, _resolved)
             stale_warning = _check_file_staleness(path, task_id)
             file_ops = _get_file_ops(task_id)
             result = file_ops.write_file(path, content)
             result_dict = result.to_dict()
-            effective_warning = cross_warning or stale_warning
+            effective_warning = (cross_warning.message if cross_warning else None) or stale_warning
             if effective_warning:
                 result_dict["_warning"] = effective_warning
             # Refresh stamps after the successful write so consecutive
@@ -1016,8 +1021,10 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
                 _locks.enter_context(file_state.lock_path(_r))
 
             # Collect warnings — cross-agent registry first (names sibling),
-            # then per-task tracker as a fallback.
-            stale_warnings: list[str] = []
+            # then per-task tracker as a fallback.  Keep structured warning
+            # kinds so successful targeted patches can suppress partial-read
+            # noise while preserving true stale/sibling warnings.
+            stale_warnings: list[file_state.StaleWarning] = []
             _path_to_resolved: dict[str, str] = {}
             for _p in _paths_to_check:
                 try:
@@ -1025,10 +1032,13 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
                 except Exception:
                     _r = None
                 _path_to_resolved[_p] = _r
-                _cross = file_state.check_stale(task_id, _r) if _r else None
-                _sw = _cross or _check_file_staleness(_p, task_id)
-                if _sw:
-                    stale_warnings.append(_sw)
+                _cross = file_state.check_stale_details(task_id, _r) if _r else None
+                if _cross:
+                    stale_warnings.append(_cross)
+                else:
+                    _sw = _check_file_staleness(_p, task_id)
+                    if _sw:
+                        stale_warnings.append(file_state.StaleWarning("external_mtime", _sw))
 
             file_ops = _get_file_ops(task_id)
 
@@ -1047,7 +1057,15 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
 
             result_dict = result.to_dict()
             if stale_warnings:
-                result_dict["_warning"] = stale_warnings[0] if len(stale_warnings) == 1 else " | ".join(stale_warnings)
+                visible_warnings = stale_warnings
+                if not result_dict.get("error"):
+                    visible_warnings = [
+                        warning for warning in stale_warnings
+                        if warning.kind != "partial_read"
+                    ]
+                if visible_warnings:
+                    messages = [warning.message for warning in visible_warnings]
+                    result_dict["_warning"] = messages[0] if len(messages) == 1 else " | ".join(messages)
             # Refresh stored timestamps for all successfully-patched paths so
             # consecutive edits by this task don't trigger false warnings.
             if not result_dict.get("error"):

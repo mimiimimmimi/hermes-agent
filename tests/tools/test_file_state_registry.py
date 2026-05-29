@@ -88,6 +88,14 @@ class FileStateRegistryUnitTests(unittest.TestCase):
         self.assertIsNotNone(warn)
         self.assertIn("partial", warn.lower())
 
+    def test_check_stale_details_returns_warning_kind(self):
+        p = self._mk()
+        file_state.record_read("A", p, partial=True)
+        warn = file_state.check_stale_details("A", p)
+        assert warn is not None
+        self.assertEqual(warn.kind, "partial_read")
+        self.assertIn("partial", warn.message.lower())
+
     def test_external_mtime_drift_flagged(self):
         p = self._mk()
         file_state.record_read("A", p)
@@ -281,6 +289,43 @@ class FileToolsIntegrationTests(unittest.TestCase):
         w = json.loads(write_file_tool(path=p, content="hi\n", task_id="agentX"))
         self.assertFalse(w.get("_warning"))
         self.assertNotIn("error", w)
+
+    def test_write_file_keeps_partial_read_warning(self):
+        p = self._write_seed("partial_write.txt", "one\ntwo\nthree\n")
+        r = json.loads(read_file_tool(path=p, offset=1, limit=1, task_id="partialWrite"))
+        self.assertNotIn("error", r)
+
+        w = json.loads(write_file_tool(path=p, content="replacement\n", task_id="partialWrite"))
+        warn = w.get("_warning", "")
+        self.assertIn("partial", warn.lower())
+        self.assertIn("overwriting", warn.lower())
+
+    def test_successful_patch_suppresses_partial_read_warning(self):
+        p = self._write_seed("partial_patch_success.txt", "one\ntwo\nthree\n")
+        r = json.loads(read_file_tool(path=p, offset=1, limit=1, task_id="partialPatchOk"))
+        self.assertNotIn("error", r)
+
+        patched = json.loads(patch_tool(
+            mode="replace", path=p,
+            old_string="two", new_string="TWO",
+            task_id="partialPatchOk",
+        ))
+        self.assertNotIn("error", patched)
+        self.assertNotIn("_warning", patched)
+
+    def test_failed_patch_keeps_partial_read_warning(self):
+        p = self._write_seed("partial_patch_fail.txt", "one\ntwo\nthree\n")
+        r = json.loads(read_file_tool(path=p, offset=1, limit=1, task_id="partialPatchFail"))
+        self.assertNotIn("error", r)
+
+        patched = json.loads(patch_tool(
+            mode="replace", path=p,
+            old_string="missing", new_string="MISSING",
+            task_id="partialPatchFail",
+        ))
+        self.assertIn("error", patched)
+        warn = patched.get("_warning", "")
+        self.assertIn("partial", warn.lower())
 
 
 if __name__ == "__main__":

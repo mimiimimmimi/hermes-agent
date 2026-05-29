@@ -38,6 +38,7 @@ import time
 from collections import defaultdict
 from contextlib import contextmanager
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
 
@@ -46,6 +47,17 @@ from typing import Dict, Iterable, List, Optional, Tuple
 # windowed view (offset > 1 or limit < total_lines) — writes that happen
 # after a partial read should still warn so the model re-reads in full.
 ReadStamp = Tuple[float, float, bool]
+
+
+@dataclass(frozen=True)
+class StaleWarning:
+    """Structured stale-write warning returned by ``check_stale_details``."""
+
+    kind: str
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
 
 # Number of resolved-path entries retained per agent.  Bounded to keep
 # long sessions from accumulating unbounded state.  On overflow we drop
@@ -139,8 +151,8 @@ class FileStateRegistry:
             self._reads[task_id][resolved] = (float(mtime), now, False)
             _cap_dict(self._reads[task_id], _MAX_PATHS_PER_AGENT)
 
-    def check_stale(self, task_id: str, resolved: str) -> Optional[str]:
-        """Return a model-facing warning if this write would be stale.
+    def check_stale_details(self, task_id: str, resolved: str) -> Optional[StaleWarning]:
+        """Return a structured model-facing warning if this write would be stale.
 
         Three staleness classes, in order of severity:
 
@@ -174,45 +186,55 @@ class FileStateRegistry:
             writer_tid, writer_ts = last_writer
             if writer_tid != task_id:
                 if stamp is None:
-                    return (
+                    return StaleWarning(
+                        "sibling_write",
                         f"{resolved} was modified by sibling subagent "
                         f"{writer_tid!r} but this agent never read it. "
                         "Read the file before writing to avoid overwriting "
-                        "the sibling's changes."
+                        "the sibling's changes.",
                     )
                 read_ts = stamp[1]
                 if writer_ts > read_ts:
-                    return (
+                    return StaleWarning(
+                        "sibling_write",
                         f"{resolved} was modified by sibling subagent "
                         f"{writer_tid!r} at {_fmt_ts(writer_ts)} — after "
                         f"this agent's last read at {_fmt_ts(read_ts)}. "
-                        "Re-read the file before writing."
+                        "Re-read the file before writing.",
                     )
 
         # Case 2: external / unknown modification (mtime drifted).
         if stamp is not None:
             read_mtime, _read_ts, partial = stamp
             if current_mtime != read_mtime:
-                return (
+                return StaleWarning(
+                    "external_mtime",
                     f"{resolved} was modified since you last read it "
                     "on disk (external edit or unrecorded writer). "
-                    "Re-read the file before writing."
+                    "Re-read the file before writing.",
                 )
             if partial:
-                return (
+                return StaleWarning(
+                    "partial_read",
                     f"{resolved} was last read with offset/limit pagination "
                     "(partial view). Re-read the whole file before "
-                    "overwriting it."
+                    "overwriting it.",
                 )
 
         # Case 3b: agent truly never read the file.
         if stamp is None:
-            return (
+            return StaleWarning(
+                "never_read",
                 f"{resolved} was not read by this agent. "
-                "Read the file first so you can write an informed edit."
+                "Read the file first so you can write an informed edit.",
             )
 
         return None
+
+    def check_stale(self, task_id: str, resolved: str) -> Optional[str]:
+        """Return only the warning message for backward-compatible callers."""
+        warning = self.check_stale_details(task_id, resolved)
+        return warning.message if warning else None
 
     # ── Reminder helper for delegate_tool ───────────────────────────
     def writes_since(
@@ -304,6 +326,10 @@ def check_stale(task_id: str, resolved_or_path: str | Path) -> Optional[str]:
     return _registry.check_stale(task_id, str(resolved_or_path))
 
 
+def check_stale_details(task_id: str, resolved_or_path: str | Path) -> Optional[StaleWarning]:
+    return _registry.check_stale_details(task_id, str(resolved_or_path))
+
+
 def lock_path(resolved_or_path: str | Path):
     return _registry.lock_path(str(resolved_or_path))
 
@@ -322,10 +348,12 @@ def known_reads(task_id: str) -> List[str]:
 
 __all__ = [
     "FileStateRegistry",
+    "StaleWarning",
     "get_registry",
     "record_read",
     "note_write",
     "check_stale",
+    "check_stale_details",
     "lock_path",
     "writes_since",
     "known_reads",
