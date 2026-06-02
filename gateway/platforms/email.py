@@ -273,7 +273,45 @@ class EmailAdapter(BasePlatformAdapter):
         # Map chat_id (sender email) -> last subject + message-id for threading
         self._thread_context: Dict[str, Dict[str, str]] = {}
 
+        # IMAP providers occasionally leave the SSL socket in a timeout/EOF state.
+        # Polling recovers on the next fresh connection, so keep routine transient
+        # failures out of errors.log while still surfacing sustained degradation.
+        self._imap_transient_error_count = 0
+        self._imap_transient_warning_every = int(os.getenv("EMAIL_IMAP_TRANSIENT_WARNING_EVERY", "25"))
+
         logger.info("[Email] Adapter initialized for %s", self._address)
+
+    @staticmethod
+    def _is_transient_imap_error(exc: Exception) -> bool:
+        """Return True for routine IMAP/socket failures that a later poll can retry."""
+        if isinstance(exc, (TimeoutError, socket.timeout, imaplib.IMAP4.abort)):
+            return True
+        text = str(exc).lower()
+        return any(
+            marker in text
+            for marker in (
+                "timed out",
+                "timeout",
+                "cannot read from timed out object",
+                "socket error: eof",
+                "system error",
+                "connection reset",
+                "connection aborted",
+            )
+        )
+
+    def _log_transient_imap_error(self, exc: Exception) -> None:
+        """Log transient IMAP polling failures quietly, warning only periodically."""
+        self._imap_transient_error_count += 1
+        every = max(0, self._imap_transient_warning_every)
+        if every and self._imap_transient_error_count % every == 0:
+            logger.warning(
+                "[Email] IMAP fetch has had %d transient timeout/abort failures; still retrying next poll. Last error: %s",
+                self._imap_transient_error_count,
+                exc,
+            )
+            return
+        logger.debug("[Email] IMAP fetch transient timeout/abort; will retry next poll: %s", exc)
 
     def _trim_seen_uids(self) -> None:
         """Keep only the most recent UIDs to prevent unbounded memory growth.
@@ -426,10 +464,11 @@ class EmailAdapter(BasePlatformAdapter):
                     imap.logout()
                 except Exception:
                     pass
-        except (TimeoutError, socket.timeout, imaplib.IMAP4.abort) as e:
-            logger.warning("[Email] IMAP fetch timed out/aborted; will retry next poll: %s", e)
         except Exception as e:
-            logger.error("[Email] IMAP fetch error: %s", e)
+            if self._is_transient_imap_error(e):
+                self._log_transient_imap_error(e)
+            else:
+                logger.error("[Email] IMAP fetch error: %s", e)
         return results
 
     async def _dispatch_message(self, msg_data: Dict[str, Any]) -> None:

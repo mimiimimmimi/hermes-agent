@@ -4994,20 +4994,23 @@ class GatewayRunner:
                             # in the event payload), then fall back to
                             # task.result for legacy rows written before
                             # runs shipped.
-                            handoff = ""
+                            summary_line = ""
                             payload_summary = None
                             if ev.payload and ev.payload.get("summary"):
                                 payload_summary = str(ev.payload["summary"])
                             if payload_summary:
-                                h = payload_summary.strip().splitlines()[0][:200]
-                                handoff = f"\n{h}"
+                                summary_line = payload_summary.strip().splitlines()[0][:220]
                             elif task and task.result:
-                                r = task.result.strip().splitlines()[0][:160]
-                                handoff = f"\n{r}"
+                                summary_line = task.result.strip().splitlines()[0][:180]
+                            source = f"@{who}" if who else "Kanban worker"
                             msg = (
-                                f"✔ {tag}Kanban {sub['task_id']} done"
-                                f" — {title}{handoff}"
+                                "## Kanban update\n\n"
+                                f"**Current truth:** **{title}** is done.\n\n"
+                                f"**Source:** automatic Kanban completion notification from `{source}` "
+                                f"for `{sub['task_id']}`."
                             )
+                            if summary_line:
+                                msg += f"\n\n**Summary:** {summary_line}"
                         elif kind == "blocked":
                             reason = ""
                             if ev.payload and ev.payload.get("reason"):

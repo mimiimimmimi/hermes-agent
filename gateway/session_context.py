@@ -124,6 +124,10 @@ def set_session_vars(
         _SESSION_USER_ID.set(user_id),
         _SESSION_USER_NAME.set(user_name),
         _SESSION_KEY.set(session_key),
+        # Prevent gateway turns from falling back to stale process-global
+        # HERMES_SESSION_ID values left by cron/profile jobs before the agent
+        # constructor sets the real session id via set_current_session_id().
+        _SESSION_ID.set(""),
         _SESSION_MESSAGE_ID.set(message_id),
     ]
     return tokens
@@ -148,6 +152,7 @@ def clear_session_vars(tokens: list) -> None:
         _SESSION_USER_ID,
         _SESSION_USER_NAME,
         _SESSION_KEY,
+        _SESSION_ID,
         _SESSION_MESSAGE_ID,
     ):
         var.set("")

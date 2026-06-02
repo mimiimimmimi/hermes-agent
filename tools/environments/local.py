@@ -167,6 +167,42 @@ def _build_provider_env_blocklist() -> frozenset:
 _HERMES_PROVIDER_ENV_BLOCKLIST = _build_provider_env_blocklist()
 
 
+def _repair_stale_profile_home_for_gateway_turn(env: dict) -> bool:
+    """Undo leaked profile HERMES_HOME/HOME for default gateway turns.
+
+    Cron/profile jobs intentionally run with profile-scoped HERMES_HOME. If a
+    process-global env mutation leaks into a normal Telegram/DM gateway turn,
+    terminal subprocesses start inspecting the wrong config/cron/session DB.
+    A genuine profile gateway should set HERMES_PROFILE; an accidental leak has
+    HERMES_HOME under ``~/.hermes/profiles/<name>`` with no profile marker.
+    """
+    try:
+        from gateway.session_context import _SESSION_PLATFORM, _UNSET
+        from hermes_constants import get_hermes_home_override
+
+        if _SESSION_PLATFORM.get() is _UNSET:
+            return False
+        if get_hermes_home_override():
+            return False
+        if env.get("HERMES_PROFILE"):
+            return False
+        hermes_home = env.get("HERMES_HOME", "")
+        if not hermes_home:
+            return False
+        home_path = Path(hermes_home).expanduser()
+        if home_path.parent.name != "profiles":
+            return False
+        default_root = home_path.parent.parent
+        env["HERMES_HOME"] = str(default_root)
+        # Only undo HOME when it is the profile's synthetic subprocess home.
+        if Path(env.get("HOME", "")).expanduser() == home_path / "home":
+            env["HOME"] = str(default_root.parent)
+        env.pop("HERMES_CRON_SESSION", None)
+        return True
+    except Exception:
+        return False
+
+
 def _inject_context_hermes_home(env: dict) -> None:
     """Bridge the context-local Hermes home override into subprocess env."""
     try:
@@ -202,10 +238,26 @@ def _sanitize_subprocess_env(base_env: dict | None, extra_env: dict | None = Non
             sanitized[key] = value
 
     _inject_context_hermes_home(sanitized)
+    repaired_stale_profile_home = _repair_stale_profile_home_for_gateway_turn(sanitized)
+
+    # Mirror the terminal run-env session cleanup here too. Some callers use
+    # the sanitizer directly for subprocesses; explicit empty ContextVars must
+    # remove stale process-global session vars instead of inheriting cron/job
+    # values.
+    try:
+        from gateway.session_context import _UNSET, _VAR_MAP
+        for var_name, var in _VAR_MAP.items():
+            value = var.get()
+            if value is not _UNSET and value:
+                sanitized[var_name] = value
+            elif value is not _UNSET:
+                sanitized.pop(var_name, None)
+    except Exception:
+        pass
 
     # Per-profile HOME isolation for background processes (same as _make_run_env).
     from hermes_constants import get_subprocess_home
-    _profile_home = get_subprocess_home()
+    _profile_home = None if repaired_stale_profile_home else get_subprocess_home()
     if _profile_home:
         sanitized["HOME"] = _profile_home
 
@@ -304,12 +356,13 @@ def _make_run_env(env: dict) -> dict:
         run_env["PATH"] = f"{existing_path}:{_SANE_PATH}" if existing_path else _SANE_PATH
 
     _inject_context_hermes_home(run_env)
+    repaired_stale_profile_home = _repair_stale_profile_home_for_gateway_turn(run_env)
 
     # Per-profile HOME isolation: redirect system tool configs (git, ssh, gh,
     # npm …) into {HERMES_HOME}/home/ when that directory exists.  Only the
     # subprocess sees the override — the Python process keeps the real HOME.
     from hermes_constants import get_subprocess_home
-    _profile_home = get_subprocess_home()
+    _profile_home = None if repaired_stale_profile_home else get_subprocess_home()
     if _profile_home:
         run_env["HOME"] = _profile_home
 
@@ -321,6 +374,12 @@ def _make_run_env(env: dict) -> dict:
             value = var.get()
             if value is not _UNSET and value:
                 run_env[var_name] = value
+            elif value is not _UNSET:
+                # A gateway turn may explicitly clear a session variable to
+                # block fallback to stale process-global values left by cron
+                # or profile-scoped jobs. Propagate that clear into the child
+                # environment by removing the variable.
+                run_env.pop(var_name, None)
     except Exception:
         pass
 

@@ -871,6 +871,43 @@ class TestFetchNewMessages(unittest.TestCase):
 
         self.assertEqual(results, [])
 
+    def test_fetch_transient_imap_timeout_logs_debug_not_warning(self):
+        """Routine IMAP polling timeouts should not spam warning/error logs."""
+        adapter = self._make_adapter()
+
+        with patch("imaplib.IMAP4_SSL", side_effect=TimeoutError("The read operation timed out")):
+            with self.assertLogs("gateway.platforms.email", level="DEBUG") as logs:
+                results = adapter._fetch_new_messages()
+
+        self.assertEqual(results, [])
+        self.assertTrue(any("transient timeout/abort" in line for line in logs.output))
+        self.assertFalse(any("WARNING" in line or "ERROR" in line for line in logs.output))
+
+    def test_fetch_timed_out_object_is_transient_not_error(self):
+        """Stale timed-out sockets should be classified as transient recoverable failures."""
+        adapter = self._make_adapter()
+
+        with patch("imaplib.IMAP4_SSL", side_effect=OSError("cannot read from timed out object")):
+            with self.assertLogs("gateway.platforms.email", level="DEBUG") as logs:
+                results = adapter._fetch_new_messages()
+
+        self.assertEqual(results, [])
+        self.assertTrue(any("transient timeout/abort" in line for line in logs.output))
+        self.assertFalse(any("IMAP fetch error" in line for line in logs.output))
+
+    def test_fetch_transient_imap_timeout_warns_periodically(self):
+        """Sustained transient IMAP failures still surface periodically for ops visibility."""
+        adapter = self._make_adapter()
+        adapter._imap_transient_warning_every = 2
+
+        with patch("imaplib.IMAP4_SSL", side_effect=TimeoutError("The read operation timed out")):
+            adapter._fetch_new_messages()
+            with self.assertLogs("gateway.platforms.email", level="WARNING") as logs:
+                results = adapter._fetch_new_messages()
+
+        self.assertEqual(results, [])
+        self.assertTrue(any("2 transient timeout/abort failures" in line for line in logs.output))
+
     def test_fetch_extracts_sender_name(self):
         """Sender name should be extracted from 'Name <addr>' format."""
         adapter = self._make_adapter()
